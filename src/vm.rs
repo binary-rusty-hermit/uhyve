@@ -577,7 +577,7 @@ pub trait Vm {
 		}
 
 		// TODO: should be a random start address
-		let start_address: u64 = 0x400000;
+		let start_address: u64 = 0x200000;
 		self.set_entry_point(start_address + elf.entry);
 		debug!("ELF entry point at 0x{:x}", start_address + elf.entry);
 
