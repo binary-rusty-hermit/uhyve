@@ -5,7 +5,7 @@ use goblin::elf;
 use goblin::elf64::header::{EM_X86_64, ET_DYN};
 use goblin::elf64::program_header::{PT_LOAD, PT_TLS};
 use goblin::elf64::reloc::*;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use nix::errno::errno;
 use raw_cpuid::CpuId;
 use std::convert::TryInto;
@@ -528,6 +528,184 @@ pub trait Vm {
 		}
 	}
 
+        // Load application
+        // TODO
+	unsafe fn load_application(&mut self) -> Result<()> {
+		debug!("Load application from {}", self.application_path());
+
+		let buffer = fs::read(self.application_path())
+			.map_err(|_| Error::InvalidFile(self.application_path().into()))?;
+		let elf =
+			elf::Elf::parse(&buffer).map_err(|_| Error::InvalidFile(self.application_path().into()))?;
+
+		if elf.libraries.len() > 0 {
+			warn!(
+				"Error: file depends on following libraries: {:?}",
+				elf.libraries
+			);
+			return Err(Error::InvalidFile(self.application_path().into()));
+		}
+
+		// Verify that this module is a HermitCore ELF executable.
+		if elf.header.e_type != ET_DYN {
+			return Err(Error::InvalidFile(self.application_path().into()));
+		}
+
+		if elf.header.e_machine != EM_X86_64 {
+			return Err(Error::InvalidFile(self.application_path().into()));
+		}
+
+		// acquire the slices of the user memory
+		let (vm_mem, vm_mem_length) = self.guest_mem();
+
+		// create default bootinfo
+		#[allow(clippy::cast_ptr_alignment)]
+		let boot_info = vm_mem.offset(BOOT_INFO_ADDR as isize) as *mut BootInfo;
+		*boot_info = BootInfo::new();
+
+/************** IS THIS NEEDED FOR APPLICATION?
+
+		// forward IP address to kernel
+		if let Some(ip) = self.get_ip() {
+			write(&mut (*boot_info).hcip, ip.octets());
+		}
+
+		// forward gateway address to kernel
+		if let Some(gateway) = self.get_gateway() {
+			write(&mut (*boot_info).hcgateway, gateway.octets());
+		}
+
+		// forward mask to kernel
+		if let Some(mask) = self.get_mask() {
+			write(&mut (*boot_info).hcmask, mask.octets());
+		}
+*/
+
+		// TODO: Locate the application at a chosen address
+		let start_address: u64 = 0x400000;
+		self.set_entry_point(start_address + elf.entry);
+		debug!("ELF entry point at 0x{:x}", start_address + elf.entry);
+
+		debug!("Set HermitCore header at 0x{:x}", BOOT_INFO_ADDR as usize);
+		self.set_boot_info(boot_info);
+
+/************** IS THIS NEEDED FOR APPLICATION?
+
+		write(&mut (*boot_info).base, start_address);
+		write(&mut (*boot_info).limit, vm_mem_length as u64); // memory size
+		write(&mut (*boot_info).possible_cpus, 1);
+		#[cfg(target_os = "linux")]
+		write(&mut (*boot_info).uhyve, 0x3); // announce uhyve and pci support
+		#[cfg(not(target_os = "linux"))]
+		write(&mut (*boot_info).uhyve, 0x1); // announce uhyve
+		write(&mut (*boot_info).current_boot_id, 0);
+		if self.verbose() {
+			write(&mut (*boot_info).uartport, UHYVE_UART_PORT);
+		} else {
+			write(&mut (*boot_info).uartport, 0);
+		}
+
+		debug!(
+			"Set stack base to 0x{:x}",
+			start_address - KERNEL_STACK_SIZE
+		);
+		write(
+			&mut (*boot_info).current_stack_address,
+			start_address - KERNEL_STACK_SIZE,
+		);
+
+		write(&mut (*boot_info).host_logical_addr, vm_mem.offset(0) as u64);
+
+		match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+			Ok(n) => write(&mut (*boot_info).boot_gtod, n.as_secs() * 1000000),
+			Err(err) => panic!("SystemTime before UNIX EPOCH! Error: {}", err),
+		}
+
+		let cpuid = CpuId::new();
+		let mhz: u32 = detect_freq_from_cpuid(&cpuid).unwrap_or_else(|_| {
+			debug!("Failed to detect from cpuid");
+			detect_freq_from_cpuid_hypervisor_info(&cpuid).unwrap_or_else(|_| {
+				debug!("Failed to detect from hypervisor_info");
+				get_cpu_frequency_from_os().unwrap_or(0)
+			})
+		});
+		debug!("detected a cpu frequency of {} Mhz", mhz);
+		write(&mut (*boot_info).cpu_freq, mhz);
+		if (*boot_info).cpu_freq == 0 {
+			warn!("Unable to determine processor frequency");
+		}
+*/
+
+		// load application and determine image size
+		let vm_slice = std::slice::from_raw_parts_mut(vm_mem, vm_mem_length);
+		elf.program_headers
+			.iter()
+			.try_for_each(|program_header| match program_header.p_type {
+				PT_LOAD => {
+					let region_start = (start_address + program_header.p_vaddr) as usize;
+					let region_end = region_start + program_header.p_filesz as usize;
+					let application_start = program_header.p_offset as usize;
+					let application_end = application_start + program_header.p_filesz as usize;
+
+					debug!(
+						"Load segment with start addr 0x{:x} and size 0x{:x}, offset 0x{:x}",
+						program_header.p_vaddr, program_header.p_filesz, program_header.p_offset
+					);
+
+					if region_start + program_header.p_memsz as usize > vm_mem_length {
+						error!("Guest memory size isn't large enough");
+						return Err(Error::NotEnoughMemory);
+					}
+
+					vm_slice[region_start..region_end]
+						.copy_from_slice(&buffer[application_start..application_end]);
+					for i in &mut vm_slice[region_end
+						..region_end + (program_header.p_memsz - program_header.p_filesz) as usize]
+					{
+						*i = 0
+					}
+
+					write(
+						&mut (*boot_info).image_size,
+						program_header.p_vaddr + program_header.p_memsz,
+					);
+
+					Ok(())
+				}
+				PT_TLS => {
+					// determine TLS section
+					debug!("Found TLS section with size {}", program_header.p_memsz);
+					write(
+						&mut (*boot_info).tls_start,
+						start_address + program_header.p_vaddr,
+					);
+					write(&mut (*boot_info).tls_filesz, program_header.p_filesz);
+					write(&mut (*boot_info).tls_memsz, program_header.p_memsz);
+
+					Ok(())
+				}
+				_ => Ok(()),
+			})?;
+
+		// relocate entries (strings, copy-data, etc.) with an addend
+		elf.dynrelas.iter().for_each(|rela| match rela.r_type {
+			R_X86_64_RELATIVE => {
+				let offset = (vm_mem as u64 + start_address + rela.r_offset) as *mut u64;
+				*offset = (start_address as i64 + rela.r_addend.unwrap_or(0)) as u64;
+			}
+			_ => {
+				debug!("Unsupported relocation type {}", rela.r_type);
+			}
+		});
+
+		// debug!("Boot header: {:?}", *boot_info);
+
+		debug!("Application loaded");
+
+		Ok(())
+	} // load_application
+
+
 	unsafe fn load_kernel(&mut self) -> Result<()> {
 		debug!("Load kernel from {}", self.kernel_path());
 
@@ -577,7 +755,7 @@ pub trait Vm {
 		}
 
 		// TODO: should be a random start address
-		let start_address: u64 = 0x200000;
+		let start_address: u64 = 0x400000;
 		self.set_entry_point(start_address + elf.entry);
 		debug!("ELF entry point at 0x{:x}", start_address + elf.entry);
 
@@ -585,6 +763,7 @@ pub trait Vm {
 		self.set_boot_info(boot_info);
 
 		write(&mut (*boot_info).base, start_address);
+                //info!("XXXXXXBase: 0x{:x}", (*boot_info).base);
 		write(&mut (*boot_info).limit, vm_mem_length as u64); // memory size
 		write(&mut (*boot_info).possible_cpus, 1);
 		#[cfg(target_os = "linux")]

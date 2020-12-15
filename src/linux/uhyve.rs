@@ -136,6 +136,7 @@ pub struct Uhyve {
 }
 
 impl Uhyve {
+        // TODO will need to pass the path to the application as well
 	pub fn new(kernel_path: String, specs: &Parameter, dbg: Option<DebugManager>) -> Result<Uhyve> {
 		// parse string to get IP address
 		let ip_addr = match &specs.ip {
