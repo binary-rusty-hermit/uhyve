@@ -125,6 +125,7 @@ pub struct Uhyve {
 	mem: MmapMemory,
 	num_cpus: u32,
 	path: String,
+        app_path: String,
 	boot_info: *const BootInfo,
 	verbose: bool,
 	ip: Option<Ipv4Addr>,
@@ -136,8 +137,8 @@ pub struct Uhyve {
 }
 
 impl Uhyve {
-        // TODO will need to pass the path to the application as well
-	pub fn new(kernel_path: String, specs: &Parameter, dbg: Option<DebugManager>) -> Result<Uhyve> {
+        // Pass the path to the application as well
+	pub fn new(kernel_path: String, application_path: String, specs: &Parameter, dbg: Option<DebugManager>) -> Result<Uhyve> {
 		// parse string to get IP address
 		let ip_addr = match &specs.ip {
 			Some(addr_str) => {
@@ -249,6 +250,7 @@ impl Uhyve {
 			mem,
 			num_cpus: specs.num_cpus,
 			path: kernel_path,
+                        app_path: application_path,
 			boot_info: ptr::null(),
 			verbose: specs.verbose,
 			ip: ip_addr,
@@ -300,6 +302,10 @@ impl Vm for Uhyve {
 
 	fn kernel_path(&self) -> &str {
 		&self.path
+	}
+
+	fn application_path(&self) -> &str {
+		&self.app_path
 	}
 
 	fn create_cpu(&self, id: u32) -> Result<Box<dyn VirtualCPU>> {

@@ -115,6 +115,12 @@ fn main() {
 				.index(1),
 		)
 		.arg(
+			Arg::with_name("APPLICATION")
+				.help("Sets path to the application")
+				.required(true)
+				.index(2),
+		)
+		.arg(
 			Arg::with_name("ARGUMENTS")
 				.help("Arguments of the unikernel")
 				.required(false)
@@ -126,6 +132,9 @@ fn main() {
 	let path = matches
 		.value_of("KERNEL")
 		.expect("Expect path to the kernel!");
+	let app_path = matches
+		.value_of("APPLICATION")
+		.expect("Expect path to the application!");
 	let mem_size: usize = matches
 		.value_of("MEM")
 		.map(|x| {
@@ -174,6 +183,7 @@ fn main() {
 	let vm = Arc::new({
 		let mut vm = vm::create_vm(
 			path.to_string(),
+                        app_path.to_string(),
 			&vm::Parameter::new(
 				mem_size, num_cpus, verbose, hugepage, mergeable, ip, gateway, mask, nic, gdbport,
 			),
@@ -183,6 +193,7 @@ fn main() {
 			vm.load_kernel().expect("Unabled to load the kernel");
 		}
 		vm
+        // XXX TODO Need to load the application for Binary Rusty Hermit XXX
 	});
 
 	let num_cpus = vm.num_cpus();

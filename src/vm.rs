@@ -5,7 +5,7 @@ use goblin::elf;
 use goblin::elf64::header::{EM_X86_64, ET_DYN};
 use goblin::elf64::program_header::{PT_LOAD, PT_TLS};
 use goblin::elf64::reloc::*;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use nix::errno::errno;
 use raw_cpuid::CpuId;
 use std::convert::TryInto;
@@ -469,6 +469,7 @@ pub trait Vm {
 	fn set_entry_point(&mut self, entry: u64);
 	fn get_entry_point(&self) -> u64;
 	fn kernel_path(&self) -> &str;
+	fn application_path(&self) -> &str;
 	fn create_cpu(&self, id: u32) -> Result<Box<dyn VirtualCPU>>;
 	fn set_boot_info(&mut self, header: *const BootInfo);
 	fn cpu_online(&self) -> u32;
@@ -528,7 +529,7 @@ pub trait Vm {
 		}
 	}
 
-        // Load application
+        // Load application XXX for Binary Rusty Hermit XXX
         // TODO
 	unsafe fn load_application(&mut self) -> Result<()> {
 		debug!("Load application from {}", self.application_path());
@@ -547,6 +548,8 @@ pub trait Vm {
 		}
 
 		// Verify that this module is a HermitCore ELF executable.
+// Remove Dynamic
+/*
 		if elf.header.e_type != ET_DYN {
 			return Err(Error::InvalidFile(self.application_path().into()));
 		}
@@ -554,6 +557,7 @@ pub trait Vm {
 		if elf.header.e_machine != EM_X86_64 {
 			return Err(Error::InvalidFile(self.application_path().into()));
 		}
+*/
 
 		// acquire the slices of the user memory
 		let (vm_mem, vm_mem_length) = self.guest_mem();
@@ -581,7 +585,7 @@ pub trait Vm {
 		}
 */
 
-		// TODO: Locate the application at a chosen address
+		// XXX Locate the application at a chosen address XXX
 		let start_address: u64 = 0x400000;
 		self.set_entry_point(start_address + elf.entry);
 		debug!("ELF entry point at 0x{:x}", start_address + elf.entry);
@@ -687,6 +691,8 @@ pub trait Vm {
 				_ => Ok(()),
 			})?;
 
+// XXX Is this needed for static binary? XXX
+
 		// relocate entries (strings, copy-data, etc.) with an addend
 		elf.dynrelas.iter().for_each(|rela| match rela.r_type {
 			R_X86_64_RELATIVE => {
@@ -755,7 +761,7 @@ pub trait Vm {
 		}
 
 		// TODO: should be a random start address
-		let start_address: u64 = 0x400000;
+		let start_address: u64 = 0x800000;
 		self.set_entry_point(start_address + elf.entry);
 		debug!("ELF entry point at 0x{:x}", start_address + elf.entry);
 
@@ -763,7 +769,6 @@ pub trait Vm {
 		self.set_boot_info(boot_info);
 
 		write(&mut (*boot_info).base, start_address);
-                //info!("XXXXXXBase: 0x{:x}", (*boot_info).base);
 		write(&mut (*boot_info).limit, vm_mem_length as u64); // memory size
 		write(&mut (*boot_info).possible_cpus, 1);
 		#[cfg(target_os = "linux")]
@@ -1106,11 +1111,11 @@ mod tests {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn create_vm(path: String, specs: &super::vm::Parameter) -> Result<Uhyve> {
+pub fn create_vm(path: String, app_path: String, specs: &super::vm::Parameter) -> Result<Uhyve> {
 	// If we are given a port, create new DebugManager.
 	let gdb = specs.gdbport.map(|port| DebugManager::new(port).unwrap());
 
-	let vm = Uhyve::new(path, &specs, gdb)?;
+	let vm = Uhyve::new(path, app_path, &specs, gdb)?;
 
 	Ok(vm)
 }
