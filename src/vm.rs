@@ -2,7 +2,7 @@ use super::paging::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::_rdtsc as rdtsc;
 use goblin::elf;
-use goblin::elf64::header::{EM_X86_64, ET_DYN};
+use goblin::elf64::header::{EM_X86_64, ET_DYN, ET_EXEC};
 use goblin::elf64::program_header::{PT_LOAD, PT_TLS};
 use goblin::elf64::reloc::*;
 use log::{debug, error, warn};
@@ -55,6 +55,7 @@ pub struct BootInfo {
 	pub hcip: [u8; 4],
 	pub hcgateway: [u8; 4],
 	pub hcmask: [u8; 4],
+        pub app_size: u64,
 }
 
 impl BootInfo {
@@ -86,6 +87,7 @@ impl BootInfo {
 			hcip: [255, 255, 255, 255],
 			hcgateway: [255, 255, 255, 255],
 			hcmask: [255, 255, 255, 0],
+                        app_size: 0,
 		}
 	}
 }
@@ -468,6 +470,8 @@ pub trait Vm {
 	fn guest_mem(&self) -> (*mut u8, usize);
 	fn set_entry_point(&mut self, entry: u64);
 	fn get_entry_point(&self) -> u64;
+	fn set_app_entry_point(&mut self, app_entry: u64);
+	fn get_app_entry_point(&self) -> u64;
 	fn kernel_path(&self) -> &str;
 	fn application_path(&self) -> &str;
 	fn create_cpu(&self, id: u32) -> Result<Box<dyn VirtualCPU>>;
@@ -530,10 +534,10 @@ pub trait Vm {
 	}
 
         // Load application XXX for Binary Rusty Hermit XXX
-        // TODO
 	unsafe fn load_application(&mut self) -> Result<()> {
 		debug!("Load application from {}", self.application_path());
 
+                println!("Application path is {}", self.application_path());
 		let buffer = fs::read(self.application_path())
 			.map_err(|_| Error::InvalidFile(self.application_path().into()))?;
 		let elf =
@@ -548,16 +552,18 @@ pub trait Vm {
 		}
 
 		// Verify that this module is a HermitCore ELF executable.
-// Remove Dynamic
-/*
+/* Don't accept dynamic for now(?)
 		if elf.header.e_type != ET_DYN {
+			return Err(Error::InvalidFile(self.application_path().into()));
+		}
+*/
+		if elf.header.e_type != ET_EXEC {
 			return Err(Error::InvalidFile(self.application_path().into()));
 		}
 
 		if elf.header.e_machine != EM_X86_64 {
 			return Err(Error::InvalidFile(self.application_path().into()));
 		}
-*/
 
 		// acquire the slices of the user memory
 		let (vm_mem, vm_mem_length) = self.guest_mem();
@@ -565,35 +571,25 @@ pub trait Vm {
 		// create default bootinfo
 		#[allow(clippy::cast_ptr_alignment)]
 		let boot_info = vm_mem.offset(BOOT_INFO_ADDR as isize) as *mut BootInfo;
+/*
 		*boot_info = BootInfo::new();
-
-/************** IS THIS NEEDED FOR APPLICATION?
-
-		// forward IP address to kernel
-		if let Some(ip) = self.get_ip() {
-			write(&mut (*boot_info).hcip, ip.octets());
-		}
-
-		// forward gateway address to kernel
-		if let Some(gateway) = self.get_gateway() {
-			write(&mut (*boot_info).hcgateway, gateway.octets());
-		}
-
-		// forward mask to kernel
-		if let Some(mask) = self.get_mask() {
-			write(&mut (*boot_info).hcmask, mask.octets());
-		}
 */
 
 		// XXX Locate the application at a chosen address XXX
 		let start_address: u64 = 0x400000;
-		self.set_entry_point(start_address + elf.entry);
-		debug!("ELF entry point at 0x{:x}", start_address + elf.entry);
+		self.set_app_entry_point(start_address + elf.entry);
+		debug!("ELF application entry point at 0x{:x}", start_address + elf.entry);
 
+                println!("start_address of application is 0x{:x}", start_address);
+                println!("Entry point is 0x{:x}", elf.entry);
+                println!("app_entry_point is 0x{:x}", self.get_app_entry_point());
+
+/*
 		debug!("Set HermitCore header at 0x{:x}", BOOT_INFO_ADDR as usize);
 		self.set_boot_info(boot_info);
+*/
 
-/************** IS THIS NEEDED FOR APPLICATION?
+/************** PROBABLY NOT NEEDED FOR APPLICATION
 
 		write(&mut (*boot_info).base, start_address);
 		write(&mut (*boot_info).limit, vm_mem_length as u64); // memory size
@@ -638,7 +634,7 @@ pub trait Vm {
 		if (*boot_info).cpu_freq == 0 {
 			warn!("Unable to determine processor frequency");
 		}
-*/
+*****************/
 
 		// load application and determine image size
 		let vm_slice = std::slice::from_raw_parts_mut(vm_mem, vm_mem_length);
@@ -656,6 +652,11 @@ pub trait Vm {
 						program_header.p_vaddr, program_header.p_filesz, program_header.p_offset
 					);
 
+                                        println!("region_start: 0x{:x}", region_start);
+                                        println!("region_end: 0x{:x}", region_end);
+                                        println!("application_start: 0x{:x}", application_start);
+                                        println!("application_end: 0x{:x}", application_end);
+
 					if region_start + program_header.p_memsz as usize > vm_mem_length {
 						error!("Guest memory size isn't large enough");
 						return Err(Error::NotEnoughMemory);
@@ -669,13 +670,24 @@ pub trait Vm {
 						*i = 0
 					}
 
+                                        let app_entry_point_addr = self.get_app_entry_point() as u64;
+                                        let vm_mem_addr = vm_mem as u64;
+                                        let app_phys_entry_addr = (vm_mem_addr + app_entry_point_addr) as *const i64;
+
+                                        //println!("vm_mem: {:?}", vm_mem);
+                                        println!("app_entry_point address: {:?}", app_phys_entry_addr);
+                                        println!("app_entry_point contents: {:x}", (*app_phys_entry_addr));
+
 					write(
-						&mut (*boot_info).image_size,
+						&mut (*boot_info).app_size,
 						program_header.p_vaddr + program_header.p_memsz,
 					);
+                                        println!("app_size: 0x{:x}", (*boot_info).app_size);
 
 					Ok(())
 				}
+
+/*********************** Don't need to read TLS section (yet)
 				PT_TLS => {
 					// determine TLS section
 					debug!("Found TLS section with size {}", program_header.p_memsz);
@@ -688,11 +700,13 @@ pub trait Vm {
 
 					Ok(())
 				}
+***************************/
 				_ => Ok(()),
 			})?;
 
-// XXX Is this needed for static binary? XXX
+// XXX Not needed for static binary XXX
 
+/*
 		// relocate entries (strings, copy-data, etc.) with an addend
 		elf.dynrelas.iter().for_each(|rela| match rela.r_type {
 			R_X86_64_RELATIVE => {
@@ -703,6 +717,7 @@ pub trait Vm {
 				debug!("Unsupported relocation type {}", rela.r_type);
 			}
 		});
+*/
 
 		// debug!("Boot header: {:?}", *boot_info);
 
@@ -761,7 +776,7 @@ pub trait Vm {
 		}
 
 		// TODO: should be a random start address
-		let start_address: u64 = 0x800000;
+		let start_address: u64 = 0x1000000;
 		self.set_entry_point(start_address + elf.entry);
 		debug!("ELF entry point at 0x{:x}", start_address + elf.entry);
 

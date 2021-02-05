@@ -122,6 +122,7 @@ impl Drop for UhyveNetwork {
 pub struct Uhyve {
 	vm: VmFd,
 	entry_point: u64,
+        app_entry_point: u64,
 	mem: MmapMemory,
 	num_cpus: u32,
 	path: String,
@@ -137,7 +138,7 @@ pub struct Uhyve {
 }
 
 impl Uhyve {
-        // Pass the path to the application as well
+        // XXX Pass the path to the application as well XXX
 	pub fn new(kernel_path: String, application_path: String, specs: &Parameter, dbg: Option<DebugManager>) -> Result<Uhyve> {
 		// parse string to get IP address
 		let ip_addr = match &specs.ip {
@@ -247,6 +248,7 @@ impl Uhyve {
 		let hyve = Uhyve {
 			vm,
 			entry_point: 0,
+                        app_entry_point: 0,
 			mem,
 			num_cpus: specs.num_cpus,
 			path: kernel_path,
@@ -278,6 +280,14 @@ impl Vm for Uhyve {
 
 	fn get_entry_point(&self) -> u64 {
 		self.entry_point
+	}
+
+	fn set_app_entry_point(&mut self, app_entry: u64) {
+		self.app_entry_point = app_entry;
+	}
+
+	fn get_app_entry_point(&self) -> u64 {
+		self.app_entry_point
 	}
 
 	fn get_ip(&self) -> Option<Ipv4Addr> {

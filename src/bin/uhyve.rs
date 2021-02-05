@@ -192,8 +192,12 @@ fn main() {
 		unsafe {
 			vm.load_kernel().expect("Unabled to load the kernel");
 		}
-		vm
-        // XXX TODO Need to load the application for Binary Rusty Hermit XXX
+        // XXX Load the application for Binary Rusty Hermit XXX
+		unsafe {
+			vm.load_application().expect("Unable to load the application");
+		}
+
+                vm
 	});
 
 	let num_cpus = vm.num_cpus();
