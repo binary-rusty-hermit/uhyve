@@ -56,6 +56,8 @@ pub struct BootInfo {
 	pub hcgateway: [u8; 4],
 	pub hcmask: [u8; 4],
         pub app_size: u64,
+        pub app_start: usize,     // Size of a pointer e.g. an address
+        pub app_entry_point: u64,
 }
 
 impl BootInfo {
@@ -88,6 +90,8 @@ impl BootInfo {
 			hcgateway: [255, 255, 255, 255],
 			hcmask: [255, 255, 255, 0],
                         app_size: 0,
+                        app_start: 0,
+                        app_entry_point: 0,
 		}
 	}
 }
@@ -582,60 +586,13 @@ pub trait Vm {
 		debug!("ELF application entry point at 0x{:x}", start_address + elf.entry);
 
                 println!("start_address of application is 0x{:x}", start_address);
-                println!("Entry point is 0x{:x}", elf.entry);
-                println!("app_entry_point is 0x{:x}", self.get_app_entry_point());
+                println!("Entry point: 0x{:x}", elf.entry);
+                println!("app_entry_point: 0x{:x}\n", self.get_app_entry_point());
 
 /*
 		debug!("Set HermitCore header at 0x{:x}", BOOT_INFO_ADDR as usize);
 		self.set_boot_info(boot_info);
 */
-
-/************** PROBABLY NOT NEEDED FOR APPLICATION
-
-		write(&mut (*boot_info).base, start_address);
-		write(&mut (*boot_info).limit, vm_mem_length as u64); // memory size
-		write(&mut (*boot_info).possible_cpus, 1);
-		#[cfg(target_os = "linux")]
-		write(&mut (*boot_info).uhyve, 0x3); // announce uhyve and pci support
-		#[cfg(not(target_os = "linux"))]
-		write(&mut (*boot_info).uhyve, 0x1); // announce uhyve
-		write(&mut (*boot_info).current_boot_id, 0);
-		if self.verbose() {
-			write(&mut (*boot_info).uartport, UHYVE_UART_PORT);
-		} else {
-			write(&mut (*boot_info).uartport, 0);
-		}
-
-		debug!(
-			"Set stack base to 0x{:x}",
-			start_address - KERNEL_STACK_SIZE
-		);
-		write(
-			&mut (*boot_info).current_stack_address,
-			start_address - KERNEL_STACK_SIZE,
-		);
-
-		write(&mut (*boot_info).host_logical_addr, vm_mem.offset(0) as u64);
-
-		match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-			Ok(n) => write(&mut (*boot_info).boot_gtod, n.as_secs() * 1000000),
-			Err(err) => panic!("SystemTime before UNIX EPOCH! Error: {}", err),
-		}
-
-		let cpuid = CpuId::new();
-		let mhz: u32 = detect_freq_from_cpuid(&cpuid).unwrap_or_else(|_| {
-			debug!("Failed to detect from cpuid");
-			detect_freq_from_cpuid_hypervisor_info(&cpuid).unwrap_or_else(|_| {
-				debug!("Failed to detect from hypervisor_info");
-				get_cpu_frequency_from_os().unwrap_or(0)
-			})
-		});
-		debug!("detected a cpu frequency of {} Mhz", mhz);
-		write(&mut (*boot_info).cpu_freq, mhz);
-		if (*boot_info).cpu_freq == 0 {
-			warn!("Unable to determine processor frequency");
-		}
-*****************/
 
 		// load application and determine image size
 		let vm_slice = std::slice::from_raw_parts_mut(vm_mem, vm_mem_length);
@@ -679,11 +636,20 @@ pub trait Vm {
                                         println!("app_entry_point address: {:?}", app_phys_entry_addr);
                                         println!("app_entry_point contents: {:x}", (*app_phys_entry_addr));
 
+                                        // Set to the end of the last segment
 					write(
 						&mut (*boot_info).app_size,
 						program_header.p_vaddr + program_header.p_memsz,
 					);
-                                        println!("app_size: 0x{:x}", (*boot_info).app_size);
+                                        // Set to the lowest of the LOAD segment start points
+                                        if application_start < (*boot_info).app_start {
+						write(&mut (*boot_info).app_start, application_start);
+                                        }
+					write(&mut (*boot_info).app_entry_point, self.get_app_entry_point());
+
+                                        println!("(boot_info).app_size: 0x{:x}", (*boot_info).app_size);
+                                        println!("(boot_info).app_start: 0x{:x}", (*boot_info).app_start);
+                                        println!("(boot_info).app_entry_point: 0x{:x}\n", (*boot_info).app_entry_point);
 
 					Ok(())
 				}
@@ -720,7 +686,7 @@ pub trait Vm {
 		});
 */
 
-		// debug!("Boot header: {:?}", *boot_info);
+		debug!("Boot header: {:?}", *boot_info);
 
 		debug!("Application loaded");
 
