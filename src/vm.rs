@@ -571,12 +571,13 @@ pub trait Vm {
 		// create default bootinfo
 		#[allow(clippy::cast_ptr_alignment)]
 		let boot_info = vm_mem.offset(BOOT_INFO_ADDR as isize) as *mut BootInfo;
-/*
+
+/**** THIS IS CREATED DURING KERNEL LOADING
 		*boot_info = BootInfo::new();
 */
 
 		// XXX Locate the application at a chosen address XXX
-		let start_address: u64 = 0x400000;
+		let start_address: u64 = 0x000000;
 		self.set_app_entry_point(start_address + elf.entry);
 		debug!("ELF application entry point at 0x{:x}", start_address + elf.entry);
 
@@ -670,11 +671,11 @@ pub trait Vm {
 						*i = 0
 					}
 
-                                        let app_entry_point_addr = self.get_app_entry_point() as u64;
+                                        //let app_entry_point_addr = self.get_app_entry_point() as u64;
                                         let vm_mem_addr = vm_mem as u64;
-                                        let app_phys_entry_addr = (vm_mem_addr + app_entry_point_addr) as *const i64;
+                                        let app_phys_entry_addr = (vm_mem_addr + self.get_app_entry_point()) as *const i64;
 
-                                        //println!("vm_mem: {:?}", vm_mem);
+                                        println!("vm_mem: {:?}", vm_mem);
                                         println!("app_entry_point address: {:?}", app_phys_entry_addr);
                                         println!("app_entry_point contents: {:x}", (*app_phys_entry_addr));
 
