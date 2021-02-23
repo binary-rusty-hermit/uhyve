@@ -55,9 +55,12 @@ pub struct BootInfo {
 	pub hcip: [u8; 4],
 	pub hcgateway: [u8; 4],
 	pub hcmask: [u8; 4],
-        pub app_size: u64,
-        pub app_start: usize,     // Size of a pointer e.g. an address
-        pub app_entry_point: u64,
+	pub app_size: u64,
+	pub app_start: usize,     // Size of a pointer e.g. an address
+	pub app_entry_point: u64,
+	pub app_ehdr_phoff: u64,
+	pub app_ehdr_phnum: u16,
+	pub app_ehdr_phentsize: u16,
 }
 
 impl BootInfo {
@@ -89,9 +92,13 @@ impl BootInfo {
 			hcip: [255, 255, 255, 255],
 			hcgateway: [255, 255, 255, 255],
 			hcmask: [255, 255, 255, 0],
-                        app_size: 0,
-                        app_start: 0,
-                        app_entry_point: 0,
+			app_size: 0,
+			app_start: 0,
+			app_entry_point: 0,
+			app_ehdr_phoff: 0,
+			app_ehdr_phnum: 0,
+			app_ehdr_phentsize: 0,
+
 		}
 	}
 }
@@ -576,23 +583,38 @@ pub trait Vm {
 		#[allow(clippy::cast_ptr_alignment)]
 		let boot_info = vm_mem.offset(BOOT_INFO_ADDR as isize) as *mut BootInfo;
 
-/**** THIS IS CREATED DURING KERNEL LOADING
-		*boot_info = BootInfo::new();
-*/
 
-		// XXX Locate the application at a chosen address XXX
+		// Locate the application at a chosen address
 		let start_address: u64 = 0x000000;
 		self.set_app_entry_point(start_address + elf.entry);
 		debug!("ELF application entry point at 0x{:x}", start_address + elf.entry);
 
-                println!("start_address of application is 0x{:x}", start_address);
-                println!("Entry point: 0x{:x}", elf.entry);
-                println!("app_entry_point: 0x{:x}\n", self.get_app_entry_point());
+		// For debugging
+		println!("start_address:   0x{:x}", start_address);
+		println!("Entry point:     0x{:x}", elf.entry);
+		println!("app_entry_point: 0x{:x}\n", self.get_app_entry_point());
 
 /*
 		debug!("Set HermitCore header at 0x{:x}", BOOT_INFO_ADDR as usize);
 		self.set_boot_info(boot_info);
 */
+
+		// Set boot info
+		write(&mut (*boot_info).app_entry_point, self.get_app_entry_point());
+
+		// For debugging
+		let app_e_phoff = elf.header.e_phoff;
+		println!("app_e_phoff: {}", app_e_phoff);
+
+		let app_e_phnum = elf.header.e_phnum;
+		println!("app_e_phnum: {}", app_e_phnum);
+
+		let app_e_phentsize = elf.header.e_phentsize;
+		println!("app_e_phentsize: {}\n", app_e_phentsize);
+
+		write(&mut (*boot_info).app_ehdr_phoff, elf.header.e_phoff);
+		write(&mut (*boot_info).app_ehdr_phnum, elf.header.e_phnum);
+		write(&mut (*boot_info).app_ehdr_phentsize, elf.header.e_phentsize);
 
 		// load application and determine image size
 		let vm_slice = std::slice::from_raw_parts_mut(vm_mem, vm_mem_length);
@@ -628,14 +650,6 @@ pub trait Vm {
 						*i = 0
 					}
 
-                                        //let app_entry_point_addr = self.get_app_entry_point() as u64;
-                                        let vm_mem_addr = vm_mem as u64;
-                                        let app_phys_entry_addr = (vm_mem_addr + self.get_app_entry_point()) as *const i64;
-
-                                        println!("vm_mem: {:?}", vm_mem);
-                                        println!("app_entry_point address: {:?}", app_phys_entry_addr);
-                                        println!("app_entry_point contents: {:x}", (*app_phys_entry_addr));
-
                                         // Set to the end of the last segment
 					write(
 						&mut (*boot_info).app_size,
@@ -645,11 +659,9 @@ pub trait Vm {
                                         if application_start < (*boot_info).app_start {
 						write(&mut (*boot_info).app_start, application_start);
                                         }
-					write(&mut (*boot_info).app_entry_point, self.get_app_entry_point());
 
                                         println!("(boot_info).app_size: 0x{:x}", (*boot_info).app_size);
-                                        println!("(boot_info).app_start: 0x{:x}", (*boot_info).app_start);
-                                        println!("(boot_info).app_entry_point: 0x{:x}\n", (*boot_info).app_entry_point);
+                                        println!("(boot_info).app_start: 0x{:x}\n", (*boot_info).app_start);
 
 					Ok(())
 				}
@@ -671,20 +683,23 @@ pub trait Vm {
 				_ => Ok(()),
 			})?;
 
-// XXX Not needed for static binary XXX
+		// For debugging. Check that the first bytes of content in memory match the binary file.
+		let vm_mem_addr = vm_mem as u64;
+		let app_phys_entry_addr = (vm_mem_addr + self.get_app_entry_point()) as *const i64;
 
-/*
-		// relocate entries (strings, copy-data, etc.) with an addend
-		elf.dynrelas.iter().for_each(|rela| match rela.r_type {
-			R_X86_64_RELATIVE => {
-				let offset = (vm_mem as u64 + start_address + rela.r_offset) as *mut u64;
-				*offset = (start_address as i64 + rela.r_addend.unwrap_or(0)) as u64;
-			}
-			_ => {
-				debug!("Unsupported relocation type {}", rela.r_type);
-			}
-		});
-*/
+		println!("vm_mem: {:?}", vm_mem);
+		println!("app_entry_point address: {:?}", app_phys_entry_addr);
+		println!("app_entry_point contents: {:x}\n", (*app_phys_entry_addr));
+
+		println!("Boot info values");
+		println!("(boot_info).app_size: 0x{:x}", (*boot_info).app_size);
+		println!("(boot_info).app_start: 0x{:x}", (*boot_info).app_start);
+		println!("(boot_info).app_entry_point: 0x{:x}", (*boot_info).app_entry_point);
+		println!("(boot_info).app_ehdr_phoff: {}", (*boot_info).app_ehdr_phoff);
+		println!("(boot_info).app_ehdr_phnum: {}", (*boot_info).app_ehdr_phnum);
+		println!("(boot_info).app_ehdr_phentsize: {}\n", (*boot_info).app_ehdr_phentsize);
+
+
 
 		debug!("Boot header: {:?}", *boot_info);
 
