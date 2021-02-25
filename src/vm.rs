@@ -204,6 +204,14 @@ struct SysLseek {
 }
 
 #[repr(C, packed)]
+struct SysReadlink {
+        pathname: *const u8,
+        buf: *const u8,
+        len: usize,
+        ret: isize,
+}
+
+#[repr(C, packed)]
 struct SysExit {
 	arg: i32,
 }
@@ -231,6 +239,43 @@ struct SysCmdval {
 struct SysUnlink {
 	name: *const u8,
 	ret: i32,
+}
+
+struct timespec {
+    pub tv_sec: i64,
+    pub tv_nsec: i32,
+}
+
+#[repr(C)]
+struct stat {
+    pub st_dev: u64,
+    pub st_ino: u64,
+    pub st_nlink: u64,
+    pub st_mode: u32,
+    pub st_uid: u32,
+    pub st_gid: u32,
+    pub st_rdev: u64,
+    pub st_size: i64,
+    pub st_blksize: i32,
+    pub st_blocks: i64,
+    pub st_atim: timespec,
+    pub st_mtim: timespec,
+    pub st_ctim: timespec,
+    // some fields omitted
+}
+
+#[repr(C, packed)]
+struct SysFstat {
+        fd: i32,
+        st: *mut stat,
+        ret: i32,
+}
+
+#[repr(C, packed)]
+struct SysStat {
+        name: *const u8,
+        st: *mut stat,
+        ret: i32,
 }
 
 pub trait VirtualCPU {
@@ -452,6 +497,55 @@ pub trait VirtualCPU {
 
 		Ok(())
 	}
+
+	fn readlink(&self, args_ptr: usize) -> Result<()> {
+                unsafe {
+			println!("here in vm.s");
+                        let sysreadlink = &mut *(args_ptr as *mut SysReadlink);
+                        let buffer = self.virt_to_phys(sysreadlink.buf as usize);
+
+                        let bytes_read = libc::readlink(
+				self.host_address(sysreadlink.pathname as usize) as *const i8,
+                                self.host_address(buffer) as *mut i8,
+                                sysreadlink.len,
+                        );
+			println!("{}", bytes_read);
+                        if bytes_read >= 0 {
+                                sysreadlink.ret = bytes_read;
+                        } else {
+                                sysreadlink.ret = -1;
+                        }
+                }
+
+                Ok(())
+        }
+
+	fn fstat(&self, args_ptr: usize) -> Result<()> {
+                unsafe {
+                        let sysfstat = &mut *(args_ptr as *mut SysFstat);
+			let st = self.virt_to_phys(sysfstat.st as usize);
+                        sysfstat.ret = libc::fstat(
+                                sysfstat.fd,
+                                self.host_address(st) as *mut libc::stat
+                        );
+                }
+
+                Ok(())
+        }
+
+	fn stat(&self, args_ptr: usize) -> Result<()> {
+                unsafe {
+                        let sysstat = &mut *(args_ptr as *mut SysStat);
+                        let st = self.virt_to_phys(sysstat.st as usize);
+                        sysstat.ret = libc::stat(
+                                self.host_address(sysstat.name as usize) as *const i8,
+                                self.host_address(st) as *mut libc::stat
+                        );
+                }
+
+                Ok(())
+        }
+
 }
 
 // Constructor for a conventional segment GDT (or LDT) entry
