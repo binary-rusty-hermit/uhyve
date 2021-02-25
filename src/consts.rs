@@ -33,6 +33,10 @@ pub const UHYVE_PORT_READ: u16 = 0x500;
 pub const UHYVE_PORT_EXIT: u16 = 0x540;
 pub const UHYVE_PORT_LSEEK: u16 = 0x580;
 
+pub const UHYVE_PORT_READLINK: u16 = 0x880;
+pub const UHYVE_PORT_FSTAT: u16 = 0x900;
+pub const UHYVE_PORT_STAT: u16 = 0x940;
+
 // Networkports
 pub const UHYVE_PORT_NETWRITE: u16 = 0x640;
 pub const UHYVE_PORT_NETREAD: u16 = 0x680;

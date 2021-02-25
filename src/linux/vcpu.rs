@@ -418,6 +418,25 @@ impl VirtualCPU for UhyveCPU {
 								unsafe { (*(addr.as_ptr() as *const u32)) as usize };
 							self.close(self.host_address(data_addr))?;
 						}
+
+						UHYVE_PORT_READLINK => {
+							let data_addr: usize =
+                                                                unsafe { (*(addr.as_ptr() as *const u32)) as usize };
+                                                        self.readlink(self.host_address(data_addr))?;
+						}
+
+						UHYVE_PORT_FSTAT => {
+                                                        let data_addr: usize =
+                                                                unsafe { (*(addr.as_ptr() as *const u32)) as usize };
+                                                        self.fstat(self.host_address(data_addr))?;
+                                                }
+
+						UHYVE_PORT_STAT => {
+                                                        let data_addr: usize =
+                                                                unsafe { (*(addr.as_ptr() as *const u32)) as usize };
+                                                        self.stat(self.host_address(data_addr))?;
+                                                }
+
 						//TODO:
 						PCI_CONFIG_DATA_PORT => {
 							if pci_addr & 0x1ff800 == 0 && pci_addr_set {
