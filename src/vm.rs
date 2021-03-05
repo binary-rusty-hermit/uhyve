@@ -15,6 +15,8 @@ use std::ptr::write;
 use std::time::{Duration, Instant, SystemTime};
 use std::{fmt, mem, slice};
 
+use std::ffi::CString;
+
 use crate::consts::*;
 use crate::debug_manager::DebugManager;
 use crate::error::*;
@@ -206,7 +208,7 @@ struct SysLseek {
 #[repr(C, packed)]
 struct SysReadlink {
         pathname: *const u8,
-        buf: *const u8,
+        buf: *mut u8,
         len: usize,
         ret: isize,
 }
@@ -500,22 +502,47 @@ pub trait VirtualCPU {
 
 	fn readlink(&self, args_ptr: usize) -> Result<()> {
                 unsafe {
-			println!("here in vm.s");
                         let sysreadlink = &mut *(args_ptr as *mut SysReadlink);
                         let buffer = self.virt_to_phys(sysreadlink.buf as usize);
 
-                        let bytes_read = libc::readlink(
-				self.host_address(sysreadlink.pathname as usize) as *const i8,
-                                self.host_address(buffer) as *mut i8,
-                                sysreadlink.len,
-                        );
-			println!("{}", bytes_read);
-                        if bytes_read >= 0 {
-                                sysreadlink.ret = bytes_read;
-                        } else {
-                                sysreadlink.ret = -1;
-                        }
-                }
+			// Check if pathname is equal to "/proc/self/exe"
+			// If it is return the absolute path of the kernel
+			// We have to do this since we are using a proxy, 
+			// and "/proc/self/exe" would return binary of uhyve
+			let strcmp = libc::strcmp(self.host_address(sysreadlink.pathname as usize) as *const i8,
+					       	                    "/proc/self/exe\0".as_ptr() as *const i8);
+			if strcmp == 0 {
+				let abspath: [i8; 256] = [0; 256];
+
+				let abspath_ref = &abspath;
+				let abspath_ptr = abspath_ref as *const i8;
+
+				// Get the absolute path of the kernel
+				libc::realpath(self.kernel_path().as_ptr() as *const i8, abspath_ptr as *mut i8);
+
+				let strlen = libc::strlen(abspath_ptr);
+
+				if sysreadlink.len > strlen {
+					// Copy value to buffer
+					libc::strcpy(self.host_address(sysreadlink.buf as usize) as *mut i8, abspath_ptr);
+					
+					sysreadlink.ret = strlen as isize;
+
+				} else { sysreadlink.ret = -1; }
+			} else {
+				// Otherwise treat as a normal readlink system call
+				let bytes_read = libc::readlink(
+        	                        self.host_address(sysreadlink.pathname as usize) as *const i8,
+                	                self.host_address(buffer) as *mut i8,
+                        	        sysreadlink.len,
+	                        	);
+
+	                        if bytes_read >= 0 {
+        	                        sysreadlink.ret = bytes_read;
+
+        	                } else { sysreadlink.ret = -1; }
+	                }
+		}
 
                 Ok(())
         }
