@@ -280,6 +280,14 @@ struct SysStat {
         ret: i32,
 }
 
+#[repr(C, packed)]
+struct SysOpenat {
+	dirfd: i32,
+        pathname: *const i8,
+	flags: i32,
+	ret: i32,
+}
+
 pub trait VirtualCPU {
 	fn init(&mut self, entry_point: u64) -> Result<()>;
 	fn run(&mut self) -> Result<()>;
@@ -572,6 +580,20 @@ pub trait VirtualCPU {
 
                 Ok(())
         }
+
+	fn openat(&self, args_ptr: usize) -> Result<()> {
+                unsafe {
+                        let sysopenat = &mut *(args_ptr as *mut SysOpenat);
+			sysopenat.ret = libc::openat(
+				sysopenat.dirfd,
+                                self.host_address(sysopenat.pathname as usize) as *const i8,
+                                sysopenat.flags);
+                }
+
+                Ok(())
+
+        }
+
 
 }
 
