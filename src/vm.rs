@@ -2,7 +2,7 @@ use super::paging::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::_rdtsc as rdtsc;
 use goblin::elf;
-use goblin::elf64::header::{EM_X86_64, ET_DYN};
+use goblin::elf64::header::{EM_X86_64, ET_DYN, ET_EXEC};
 use goblin::elf64::program_header::{PT_LOAD, PT_TLS};
 use goblin::elf64::reloc::*;
 use log::{debug, error, warn};
@@ -57,6 +57,12 @@ pub struct BootInfo {
 	pub hcip: [u8; 4],
 	pub hcgateway: [u8; 4],
 	pub hcmask: [u8; 4],
+	pub app_size: u64,
+	pub app_start: usize,     // Size of a pointer e.g. an address
+	pub app_entry_point: u64,
+	pub app_ehdr_phoff: u64,
+	pub app_ehdr_phnum: u16,
+	pub app_ehdr_phentsize: u16,
 }
 
 impl BootInfo {
@@ -88,6 +94,13 @@ impl BootInfo {
 			hcip: [255, 255, 255, 255],
 			hcgateway: [255, 255, 255, 255],
 			hcmask: [255, 255, 255, 0],
+			app_size: 0,
+			app_start: 0,
+			app_entry_point: 0,
+			app_ehdr_phoff: 0,
+			app_ehdr_phnum: 0,
+			app_ehdr_phentsize: 0,
+
 		}
 	}
 }
@@ -611,7 +624,10 @@ pub trait Vm {
 	fn guest_mem(&self) -> (*mut u8, usize);
 	fn set_entry_point(&mut self, entry: u64);
 	fn get_entry_point(&self) -> u64;
+	fn set_app_entry_point(&mut self, app_entry: u64);
+	fn get_app_entry_point(&self) -> u64;
 	fn kernel_path(&self) -> &str;
+	fn application_path(&self) -> &str;
 	fn create_cpu(&self, id: u32) -> Result<Box<dyn VirtualCPU>>;
 	fn set_boot_info(&mut self, header: *const BootInfo);
 	fn cpu_online(&self) -> u32;
@@ -671,6 +687,171 @@ pub trait Vm {
 		}
 	}
 
+        // Load application XXX for Binary Rusty Hermit XXX
+	unsafe fn load_application(&mut self) -> Result<()> {
+		debug!("Load application from {}", self.application_path());
+
+                println!("Application path is {}", self.application_path());
+		let buffer = fs::read(self.application_path())
+			.map_err(|_| Error::InvalidFile(self.application_path().into()))?;
+		let elf =
+			elf::Elf::parse(&buffer).map_err(|_| Error::InvalidFile(self.application_path().into()))?;
+
+		if elf.libraries.len() > 0 {
+			warn!(
+				"Error: file depends on following libraries: {:?}",
+				elf.libraries
+			);
+			return Err(Error::InvalidFile(self.application_path().into()));
+		}
+
+		// Verify that this module is a HermitCore ELF executable.
+/* Don't accept dynamic for now(?)
+		if elf.header.e_type != ET_DYN {
+			return Err(Error::InvalidFile(self.application_path().into()));
+		}
+*/
+		if elf.header.e_type != ET_EXEC {
+			return Err(Error::InvalidFile(self.application_path().into()));
+		}
+
+		if elf.header.e_machine != EM_X86_64 {
+			return Err(Error::InvalidFile(self.application_path().into()));
+		}
+
+		// acquire the slices of the user memory
+		let (vm_mem, vm_mem_length) = self.guest_mem();
+
+		// create default bootinfo
+		#[allow(clippy::cast_ptr_alignment)]
+		let boot_info = vm_mem.offset(BOOT_INFO_ADDR as isize) as *mut BootInfo;
+
+
+		// Locate the application at a chosen address
+		let start_address: u64 = 0x000000;
+		self.set_app_entry_point(start_address + elf.entry);
+		debug!("ELF application entry point at 0x{:x}", start_address + elf.entry);
+
+		// For debugging
+		println!("start_address:   0x{:x}", start_address);
+		println!("Entry point:     0x{:x}", elf.entry);
+		println!("app_entry_point: 0x{:x}\n", self.get_app_entry_point());
+
+/*
+		debug!("Set HermitCore header at 0x{:x}", BOOT_INFO_ADDR as usize);
+		self.set_boot_info(boot_info);
+*/
+
+		// Set boot info
+		write(&mut (*boot_info).app_entry_point, self.get_app_entry_point());
+
+		// For debugging
+		let app_e_phoff = elf.header.e_phoff;
+		println!("app_e_phoff: {}", app_e_phoff);
+
+		let app_e_phnum = elf.header.e_phnum;
+		println!("app_e_phnum: {}", app_e_phnum);
+
+		let app_e_phentsize = elf.header.e_phentsize;
+		println!("app_e_phentsize: {}\n", app_e_phentsize);
+
+		write(&mut (*boot_info).app_ehdr_phoff, elf.header.e_phoff);
+		write(&mut (*boot_info).app_ehdr_phnum, elf.header.e_phnum);
+		write(&mut (*boot_info).app_ehdr_phentsize, elf.header.e_phentsize);
+
+		// load application and determine image size
+		let vm_slice = std::slice::from_raw_parts_mut(vm_mem, vm_mem_length);
+		elf.program_headers
+			.iter()
+			.try_for_each(|program_header| match program_header.p_type {
+				PT_LOAD => {
+					let region_start = (start_address + program_header.p_vaddr) as usize;
+					let region_end = region_start + program_header.p_filesz as usize;
+					let application_start = program_header.p_offset as usize;
+					let application_end = application_start + program_header.p_filesz as usize;
+
+					debug!(
+						"Load segment with start addr 0x{:x} and size 0x{:x}, offset 0x{:x}",
+						program_header.p_vaddr, program_header.p_filesz, program_header.p_offset
+					);
+
+                                        println!("region_start: 0x{:x}", region_start);
+                                        println!("region_end: 0x{:x}", region_end);
+                                        println!("application_start: 0x{:x}", application_start);
+                                        println!("application_end: 0x{:x}", application_end);
+
+					if region_start + program_header.p_memsz as usize > vm_mem_length {
+						error!("Guest memory size isn't large enough");
+						return Err(Error::NotEnoughMemory);
+					}
+
+					vm_slice[region_start..region_end]
+						.copy_from_slice(&buffer[application_start..application_end]);
+					for i in &mut vm_slice[region_end
+						..region_end + (program_header.p_memsz - program_header.p_filesz) as usize]
+					{
+						*i = 0
+					}
+
+                                        // Set to the end of the last segment
+					write(
+						&mut (*boot_info).app_size,
+						program_header.p_vaddr + program_header.p_memsz,
+					);
+                                        // Set to the lowest of the LOAD segment start points
+                                        if application_start < (*boot_info).app_start {
+						write(&mut (*boot_info).app_start, application_start);
+                                        }
+
+                                        println!("(boot_info).app_size: 0x{:x}", (*boot_info).app_size);
+                                        println!("(boot_info).app_start: 0x{:x}\n", (*boot_info).app_start);
+
+					Ok(())
+				}
+
+/*********************** Don't need to read TLS section (yet)
+				PT_TLS => {
+					// determine TLS section
+					debug!("Found TLS section with size {}", program_header.p_memsz);
+					write(
+						&mut (*boot_info).tls_start,
+						start_address + program_header.p_vaddr,
+					);
+					write(&mut (*boot_info).tls_filesz, program_header.p_filesz);
+					write(&mut (*boot_info).tls_memsz, program_header.p_memsz);
+
+					Ok(())
+				}
+***************************/
+				_ => Ok(()),
+			})?;
+
+		// For debugging. Check that the first bytes of content in memory match the binary file.
+		let vm_mem_addr = vm_mem as u64;
+		let app_phys_entry_addr = (vm_mem_addr + self.get_app_entry_point()) as *const i64;
+
+		println!("vm_mem: {:?}", vm_mem);
+		println!("app_entry_point address: {:?}", app_phys_entry_addr);
+		println!("app_entry_point contents: {:x}\n", (*app_phys_entry_addr));
+
+		println!("Boot info values");
+		println!("(boot_info).app_size: 0x{:x}", (*boot_info).app_size);
+		println!("(boot_info).app_start: 0x{:x}", (*boot_info).app_start);
+		println!("(boot_info).app_entry_point: 0x{:x}", (*boot_info).app_entry_point);
+		println!("(boot_info).app_ehdr_phoff: {}", (*boot_info).app_ehdr_phoff);
+		println!("(boot_info).app_ehdr_phnum: {}", (*boot_info).app_ehdr_phnum);
+		println!("(boot_info).app_ehdr_phentsize: {}\n", (*boot_info).app_ehdr_phentsize);
+
+
+
+		debug!("Boot header: {:?}", *boot_info);
+
+		debug!("Application loaded");
+
+		Ok(())
+	} // load_application
+
+
 	unsafe fn load_kernel(&mut self) -> Result<()> {
 		debug!("Load kernel from {}", self.kernel_path());
 
@@ -720,7 +901,7 @@ pub trait Vm {
 		}
 
 		// TODO: should be a random start address
-		let start_address: u64 = 0x400000;
+		let start_address: u64 = 0x1000000;
 		self.set_entry_point(start_address + elf.entry);
 		debug!("ELF entry point at 0x{:x}", start_address + elf.entry);
 
@@ -1070,11 +1251,11 @@ mod tests {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn create_vm(path: String, specs: &super::vm::Parameter) -> Result<Uhyve> {
+pub fn create_vm(path: String, app_path: String, specs: &super::vm::Parameter) -> Result<Uhyve> {
 	// If we are given a port, create new DebugManager.
 	let gdb = specs.gdbport.map(|port| DebugManager::new(port).unwrap());
 
-	let vm = Uhyve::new(path, &specs, gdb)?;
+	let vm = Uhyve::new(path, app_path, &specs, gdb)?;
 
 	Ok(vm)
 }
