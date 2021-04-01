@@ -328,6 +328,7 @@ impl Vm for Uhyve {
 		Ok(Box::new(UhyveCPU::new(
 			id,
 			self.path.clone(),
+			self.app_path.clone(),
 			self.vm
 				.create_vcpu(id.try_into().unwrap())
 				.or_else(to_error)?,

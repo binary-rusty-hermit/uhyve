@@ -308,6 +308,7 @@ pub trait VirtualCPU {
 	fn host_address(&self, addr: usize) -> usize;
 	fn virt_to_phys(&self, addr: usize) -> usize;
 	fn kernel_path(&self) -> String;
+	fn application_path(&self) -> String;	
 
 	fn cmdsize(&self, args_ptr: usize) -> Result<()> {
 		let syssize = unsafe { &mut *(args_ptr as *mut SysCmdsize) };
@@ -527,7 +528,7 @@ pub trait VirtualCPU {
                         let buffer = self.virt_to_phys(sysreadlink.buf as usize);
 
 			// Check if pathname is equal to "/proc/self/exe"
-			// If it is return the absolute path of the kernel
+			// If it is return the absolute path of the application
 			// We have to do this since we are using a proxy, 
 			// and "/proc/self/exe" would return binary of uhyve
 			let strcmp = libc::strcmp(self.host_address(sysreadlink.pathname as usize) as *const i8,
@@ -538,8 +539,12 @@ pub trait VirtualCPU {
 				let abspath_ref = &abspath;
 				let abspath_ptr = abspath_ref as *const i8;
 
-				// Get the absolute path of the kernel
-				libc::realpath(self.kernel_path().as_ptr() as *const i8, abspath_ptr as *mut i8);
+				// Get the absolute path of the application
+				// Convert rust string to C string (null terminated)		
+				let mut app_path_cstring = self.application_path().as_bytes().to_vec();
+                                app_path_cstring.push(0);
+				
+				libc::realpath(app_path_cstring.as_ptr() as *const i8, abspath_ptr as *mut i8);
 
 				let strlen = libc::strlen(abspath_ptr);
 

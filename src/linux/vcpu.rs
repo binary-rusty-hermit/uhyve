@@ -26,6 +26,7 @@ pub struct UhyveCPU {
 	vcpu: VcpuFd,
 	vm_start: usize,
 	kernel_path: String,
+	application_path: String,
 	tx: Option<std::sync::mpsc::SyncSender<usize>>,
 	virtio_device: Arc<Mutex<VirtioNetPciDevice>>,
 	pub dbg: Option<Arc<Mutex<DebugManager>>>,
@@ -35,6 +36,7 @@ impl UhyveCPU {
 	pub fn new(
 		id: u32,
 		kernel_path: String,
+		application_path: String,
 		vcpu: VcpuFd,
 		vm_start: usize,
 		tx: Option<std::sync::mpsc::SyncSender<usize>>,
@@ -46,6 +48,7 @@ impl UhyveCPU {
 			vcpu,
 			vm_start,
 			kernel_path,
+			application_path,
 			tx,
 			virtio_device,
 			dbg,
@@ -257,6 +260,10 @@ impl VirtualCPU for UhyveCPU {
 
 	fn kernel_path(&self) -> String {
 		self.kernel_path.clone()
+	}
+
+	fn application_path(&self) -> String {
+		self.application_path.clone()
 	}
 
 	fn host_address(&self, addr: usize) -> usize {
